@@ -1,0 +1,155 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: time-based-scaling-controller
+  namespace: operators
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      application: time-based-scaling-controller
+  template:
+    metadata:
+      labels:
+        application: time-based-scaling-controller
+    spec:
+      serviceAccountName: time-based-scaling-controller-account
+      containers:
+      - name: time-based-scaling-controller
+        image: nexus.abriment.local:7072/abriment/time-based-scaling-controller:v1
+        imagePullPolicy: Always
+        livenessProbe:
+          httpGet:
+            path: /healthcheck
+            port: 8080
+        env:
+        - name: CHECK_INTERVAL
+          value: "60"
+        # - name: TBSC_NAME_ANNOTATION_KEY
+        #   value: tbsc.abriment.dev/name
+        # - name: DEFAULT_TIMEZONE
+        #   value: Asia/Tehran
+        resources:
+          limits:
+            cpu: "1"
+            memory: 1000Mi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: time-based-scaling-controller-account
+  namespace: abriment-time-based-scaling-operator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: time-based-scaling-controller-cluster-role
+rules:
+  # Framework: knowing which other operators are running (i.e. peering).
+  - apiGroups: [kopf.dev]
+    resources: [clusterkopfpeerings]
+    verbs: [list, watch, patch, get]
+  # Framework: knowing which other operators are running (i.e. peering).
+  - apiGroups: [zalando.org]
+    resources: [clusterkopfpeerings]
+    verbs: [list, watch, patch, get]
+  # Framework: runtime observation of namespaces & CRDs (addition/deletion).
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [list, watch]
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [list, watch]
+  # Framework: admission webhook configuration management.
+  - apiGroups: [admissionregistration.k8s.io/v1, admissionregistration.k8s.io/v1beta1]
+    resources: [validatingwebhookconfigurations, mutatingwebhookconfigurations]
+    verbs: [create, patch]
+  
+  # Framework: knowing which other operators are running (i.e. peering).
+  - apiGroups: [kopf.dev]
+    resources: [kopfpeerings]
+    verbs: [list, watch, patch, get]
+  # Framework: posting the events about the handlers progress/errors.
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create]
+  - apiGroups: [apps, extensions]
+    resources: [deployments, deployments/rollback, deployments/scale, replicasets, replicasets/scale, statefulsets, statefulsets/scale]
+    verbs: [list, get, watch, patch, update]
+  - apiGroups: [abriment.dev]
+    resources: [tbscs]
+    verbs: [list, get, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: time-based-scaling-controller-cluster-role-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: time-based-scaling-controller-cluster-role
+subjects:
+  - kind: ServiceAccount
+    name: time-based-scaling-controller-account
+    namespace: abriment-time-based-scaling-operator
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: tbscs.abriment.dev
+spec:
+  group: abriment.dev
+  scope: Namespaced
+  names:
+    plural: tbscs
+    singular: tbsc
+    kind: TimeBasedScalingController
+    shortNames:
+      - tbsc
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+              - schedulingConfig
+              properties:
+                defaultReplicas:
+                  format: int32
+                  type: integer
+                  default: 1
+                  minimum: 0
+                schedulingConfig:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                    - startTime
+                    - endTime
+                    - replicas
+                    properties:
+                      startTime:
+                        type: string
+                        pattern: '^([0-1]?[0-9]|2[0-3])$'
+                        description: "Start time of scaling in HH format."
+                      endTime:
+                        type: string
+                        pattern: '^([0-1]?[0-9]|2[0-3])$'
+                        description: "End time of scaling in HH format."
+                      replicas:
+                        format: int32
+                        type: integer
+                        minimum: 0
+                        description: "Number of replicas to scale to."
+                      timeZone:
+                        type: string
+                        description: "The timezone, Defaults to UTC."
+                        default: "Etc/UTC"
+                        pattern: '^[A-Za-z]+/[A-Za-z_]+$'

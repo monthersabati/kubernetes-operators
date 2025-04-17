@@ -1,0 +1,4 @@
+kubernetes==23.6.0
+requests
+kopf
+pytz
