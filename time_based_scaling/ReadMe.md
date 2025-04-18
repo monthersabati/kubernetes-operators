@@ -90,7 +90,7 @@ The Time-Based Scaling Operator (TBSC) is a Kubernetes operator built using the 
     ```yaml
     metadata:
       annotations:
-        tbsc.abriment.dev/name: my-time-based-scaling  # Replace with the TBSC resource name
+        tbscs.abriment.dev/name: my-time-based-scaling  # Replace with the TBSC resource name
     ```
 
     *   Replace `my-time-based-scaling` with the name of your `TimeBasedScalingController` resource.
