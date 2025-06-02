@@ -9,6 +9,7 @@ from kubernetes import client as kube_client
 API_GROUP = 'abriment.dev'
 API_VERSION = 'v1'
 
+TIMEOUT = int(getenv('TIMEOUT', 180))
 CHECK_INTERVAL = int(getenv('CHECK_INTERVAL', 300))
 TBSC_NAME_ANNOTATION_KEY = getenv('TBSC_NAME_ANNOTATION_KEY', f'tbscs.{API_GROUP}/name')
 DEFAULT_TIMEZONE = getenv('DEFAULT_TIMEZONE', "Asia/Tehran")
@@ -28,15 +29,17 @@ class TimeBasedScalingController:
             namespace=self.namespace
         )
 
-
 @kopf.on.startup()
 def configure(settings: kopf.OperatorSettings, **_):
     settings.persistence.finalizer = f'finalizers.{API_GROUP}/TimeBasedScalingController'
     settings.peering.clusterwide = True
-    settings.peering.priority = random.randint(0, 32767)
+    settings.peering.priority = 50 # random.randint(0, 32767)
     settings.peering.stealth = True
     settings.posting.enabled = False
-
+    # stream timeout
+    settings.watching.server_timeout  = 240      # seconds
+    settings.watching.client_timeout  = 300
+    settings.watching.reconnect_backoff = 2      # small pause before reopening
 
 def evaluate_replicas(tbsc: dict) -> int:
     scheduling_config = tbsc['spec'].get('schedulingConfig', [])
@@ -64,7 +67,6 @@ def evaluate_replicas(tbsc: dict) -> int:
 
     return sorted(priorities, key=lambda x: x[0])[0][1] if priorities else default_replicas
 
-
 def handle_scaling(app_kind: str, meta, spec, name: str, namespace: str, logger):
     tbsc_name = meta['annotations'].get(TBSC_NAME_ANNOTATION_KEY)
     if not tbsc_name:
@@ -84,16 +86,13 @@ def handle_scaling(app_kind: str, meta, spec, name: str, namespace: str, logger)
     except Exception as e:
         logger.error(f"Failed to process scaling for {app_kind} {name}: {e}")
 
-
-@kopf.timer('deployments', interval=CHECK_INTERVAL, annotations={TBSC_NAME_ANNOTATION_KEY: kopf.PRESENT}, timeout=60)
+@kopf.timer('deployments', interval=CHECK_INTERVAL, annotations={TBSC_NAME_ANNOTATION_KEY: kopf.PRESENT}, timeout=TIMEOUT)
 def deployment_scaling_handler(meta, spec, name, namespace, logger, **kwargs):
     handle_scaling('deployment', meta, spec, name, namespace, logger)
 
-
-@kopf.timer('statefulsets', interval=CHECK_INTERVAL, annotations={TBSC_NAME_ANNOTATION_KEY: kopf.PRESENT}, timeout=60)
+@kopf.timer('statefulsets', interval=CHECK_INTERVAL, annotations={TBSC_NAME_ANNOTATION_KEY: kopf.PRESENT}, timeout=TIMEOUT)
 def statefulset_scaling_handler(meta, spec, name, namespace, logger, **kwargs):
     handle_scaling('statefulset', meta, spec, name, namespace, logger)
-
 
 def scale(app_kind: str, name: str, namespace: str, replicas: int):
     app_client = kube_client.AppsV1Api()
